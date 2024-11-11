@@ -5,6 +5,8 @@ val DEV: String by project
 
 repositories {
     mavenCentral()
+
+    maven("https://jitpack.io")
 }
 
 group   = "one.wabbit"
@@ -14,13 +16,22 @@ plugins {
     kotlin("jvm") version "2.0.20"
 
     kotlin("plugin.serialization") version "2.0.20"
+
+    id("maven-publish")
+}
+
+publishing {
+  publications {
+    create<MavenPublication>("maven") {
+      groupId = "one.wabbit"
+      artifactId = "kotlin-exception-serialization"
+      version = "1.0.0"
+      from(components["java"])
+    }
+  }
 }
 
 dependencies {
-    if (DEV == "true") {
-    } else {
-    }
-
     testImplementation(kotlin("test"))
 
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-core:1.7.2")
