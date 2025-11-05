@@ -1,48 +1,114 @@
 package one.wabbit.exceptionserialization
 
+import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.*
+import java.util.*
+import kotlin.math.min
 
-private fun stringOrNull(s: String?): JsonElement =
-    if (s == null) JsonNull else JsonPrimitive(s)
+private fun String?.asJson(): JsonElement =
+    this?.let { JsonPrimitive(it) } ?: JsonNull
 
-val DEFAULT_EXCLUDED_PREFIXES = setOf(
+val DEFAULT_EXCLUDED_SUFFIX_PREFIXES = setOf(
     "java.lang.",
     "java.util.concurrent.",
     "io.netty.",
 )
 
-fun Throwable.toJsonObject(excludePrefixes: Set<String> = DEFAULT_EXCLUDED_PREFIXES): JsonObject {
-    val error = this
-    val className = stringOrNull(error.javaClass.name)
-    val message = stringOrNull(error.message)
-    val causeObj = error.cause
-    val cause = causeObj?.toJsonObject(excludePrefixes) ?: JsonNull
-    val suppressed = JsonArray(error.suppressed.map { it.toJsonObject(excludePrefixes) })
+@Serializable
+data class ThrowableJsonOptions(
+    val excludeSuffixPrefixes: Set<String> = DEFAULT_EXCLUDED_SUFFIX_PREFIXES,
+    val maxDepth: Int = 16,
+    val maxFrames: Int = 256,
+    val maxSuppressed: Int = 32,
+    val trimFrameworkSuffix: Boolean = true
+)
 
-    val stackTrace = JsonArray(
-        error.stackTrace.toMutableList().dropLastWhile { s ->
-            val elementClassName = s.className ?: ""
-            excludePrefixes.any { elementClassName.startsWith(it) }
-        }.map { s ->
-            JsonObject(
-                mapOf(
-                    "className" to stringOrNull(s.className),
-                    "methodName" to stringOrNull(s.methodName),
-                    "fileName" to stringOrNull(s.fileName),
-                    "lineNumber" to JsonPrimitive(s.lineNumber),
-                    "isNative" to JsonPrimitive(s.isNativeMethod)
-                )
-            )
-        }
-    )
-
-    return JsonObject(
-        mapOf(
-            "className" to className,
-            "stackTrace" to stackTrace,
-            "message" to message,
-            "cause" to cause,
-            "suppressed" to suppressed
+private fun JsonArrayBuilder.addFrames(frames: List<StackTraceElement>) {
+    for (s in frames) {
+        add(
+            buildJsonObject {
+                put("className", s.className.asJson())
+                put("methodName", s.methodName.asJson())
+                put("fileName", s.fileName.asJson())
+                if (s.lineNumber >= 0) put("lineNumber", s.lineNumber)
+                if (s.isNativeMethod) put("isNative", true)
+            }
         )
-    )
+    }
+}
+
+fun Throwable.toJsonObject(options: ThrowableJsonOptions = ThrowableJsonOptions()): JsonObject {
+    val seen = IdentityHashMap<Throwable, Boolean>()
+
+    fun framesOf(t: Throwable): List<StackTraceElement> {
+        val list = t.stackTrace.asList()
+        var end = list.size
+        if (options.trimFrameworkSuffix) {
+            while (end > 0 && options.excludeSuffixPrefixes.any { prefix ->
+                    list[end - 1].className.startsWith(prefix)
+                }) end--
+        }
+        return list.subList(0, min(end, options.maxFrames))
+    }
+
+    fun visit(t: Throwable, depth: Int): JsonObject {
+        val prefix = "  ".repeat(depth)
+        if (seen.put(t, true) != null) {
+            return buildJsonObject {
+                put("className", t.javaClass.name.asJson())
+                put("message", t.message.asJson())
+                put("stackTrace", buildJsonArray { }) // empty to avoid loops
+                put("cause", JsonNull)
+                put("suppressed", buildJsonArray { })
+                put("cycle", JsonPrimitive(true))
+            }
+        }
+        if (depth >= options.maxDepth) {
+            return buildJsonObject {
+                put("className", t.javaClass.name.asJson())
+                put("message", t.message.asJson())
+                put("stackTrace", buildJsonArray { }) // intentionally truncated
+                put("cause", JsonNull)
+                put("suppressed", buildJsonArray { })
+                put("truncated", JsonPrimitive(true))
+            }
+        }
+
+        val frames = framesOf(t)
+
+        return buildJsonObject {
+            put("className", t.javaClass.name.asJson())
+            put("message", t.message.asJson())
+            put("stackTrace", buildJsonArray { addFrames(frames) })
+
+            // cause
+            val cause = t.cause
+            if (cause != null) {
+                put("cause", visit(cause, depth + 1))
+            } else {
+                put("cause", JsonNull)
+            }
+
+            // suppressed (bounded)
+            val sup = t.suppressed
+            put("suppressed", buildJsonArray {
+                for (i in 0 until min(sup.size, options.maxSuppressed)) {
+                    add(visit(sup[i], depth + 1))
+                }
+                if (sup.size > options.maxSuppressed) {
+                    add(buildJsonObject { put("omitted", JsonPrimitive(sup.size - options.maxSuppressed)) })
+                }
+            })
+        }
+    }
+
+    return try {
+        visit(this, 0)
+    } catch (_: OutOfMemoryError) {
+        // last-ditch minimal payload
+        buildJsonObject {
+            put("className", this@toJsonObject.javaClass.name.asJson())
+            put("message", this@toJsonObject.message.asJson())
+        }
+    }
 }
