@@ -1,18 +1,20 @@
 package one.wabbit.exceptionserialization
 
-import kotlinx.serialization.Serializable
-import kotlinx.serialization.json.*
-import java.util.*
+import java.util.IdentityHashMap
 import kotlin.math.min
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonArrayBuilder
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonArray
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 
-private fun String?.asJson(): JsonElement =
-    this?.let { JsonPrimitive(it) } ?: JsonNull
+private fun String?.asJson(): JsonElement = this?.let { JsonPrimitive(it) } ?: JsonNull
 
-val DEFAULT_EXCLUDED_SUFFIX_PREFIXES = setOf(
-    "java.lang.",
-    "java.util.concurrent.",
-    "io.netty.",
-)
+val DEFAULT_EXCLUDED_SUFFIX_PREFIXES = setOf("java.lang.", "java.util.concurrent.", "io.netty.")
 
 @Serializable
 data class ThrowableJsonOptions(
@@ -20,7 +22,7 @@ data class ThrowableJsonOptions(
     val maxDepth: Int = 16,
     val maxFrames: Int = 256,
     val maxSuppressed: Int = 32,
-    val trimFrameworkSuffix: Boolean = true
+    val trimFrameworkSuffix: Boolean = true,
 )
 
 private fun JsonArrayBuilder.addFrames(frames: List<StackTraceElement>) {
@@ -44,9 +46,14 @@ fun Throwable.toJsonObject(options: ThrowableJsonOptions = ThrowableJsonOptions(
         val list = t.stackTrace.asList()
         var end = list.size
         if (options.trimFrameworkSuffix) {
-            while (end > 0 && options.excludeSuffixPrefixes.any { prefix ->
-                    list[end - 1].className.startsWith(prefix)
-                }) end--
+            while (
+                end > 0 &&
+                    options.excludeSuffixPrefixes.any { prefix ->
+                        list[end - 1].className.startsWith(prefix)
+                    }
+            ) {
+                end--
+            }
         }
         return list.subList(0, min(end, options.maxFrames))
     }
@@ -57,9 +64,9 @@ fun Throwable.toJsonObject(options: ThrowableJsonOptions = ThrowableJsonOptions(
             return buildJsonObject {
                 put("className", t.javaClass.name.asJson())
                 put("message", t.message.asJson())
-                put("stackTrace", buildJsonArray { }) // empty to avoid loops
+                put("stackTrace", buildJsonArray {}) // empty to avoid loops
                 put("cause", JsonNull)
-                put("suppressed", buildJsonArray { })
+                put("suppressed", buildJsonArray {})
                 put("cycle", JsonPrimitive(true))
             }
         }
@@ -67,9 +74,9 @@ fun Throwable.toJsonObject(options: ThrowableJsonOptions = ThrowableJsonOptions(
             return buildJsonObject {
                 put("className", t.javaClass.name.asJson())
                 put("message", t.message.asJson())
-                put("stackTrace", buildJsonArray { }) // intentionally truncated
+                put("stackTrace", buildJsonArray {}) // intentionally truncated
                 put("cause", JsonNull)
-                put("suppressed", buildJsonArray { })
+                put("suppressed", buildJsonArray {})
                 put("truncated", JsonPrimitive(true))
             }
         }
@@ -91,14 +98,21 @@ fun Throwable.toJsonObject(options: ThrowableJsonOptions = ThrowableJsonOptions(
 
             // suppressed (bounded)
             val sup = t.suppressed
-            put("suppressed", buildJsonArray {
-                for (i in 0 until min(sup.size, options.maxSuppressed)) {
-                    add(visit(sup[i], depth + 1))
-                }
-                if (sup.size > options.maxSuppressed) {
-                    add(buildJsonObject { put("omitted", JsonPrimitive(sup.size - options.maxSuppressed)) })
-                }
-            })
+            put(
+                "suppressed",
+                buildJsonArray {
+                    for (i in 0 until min(sup.size, options.maxSuppressed)) {
+                        add(visit(sup[i], depth + 1))
+                    }
+                    if (sup.size > options.maxSuppressed) {
+                        add(
+                            buildJsonObject {
+                                put("omitted", JsonPrimitive(sup.size - options.maxSuppressed))
+                            }
+                        )
+                    }
+                },
+            )
         }
     }
 

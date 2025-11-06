@@ -1,27 +1,30 @@
 package one.wabbit.exceptionserialization
 
-import kotlinx.serialization.json.*
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.boolean
+import kotlinx.serialization.json.int
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 
 class ThrowableSerializationTest {
-
     // -- helpers --------------------------------------------------------------
 
     private fun frame(
         className: String,
         method: String = "m",
         file: String? = "X.kt",
-        line: Int = 1
+        line: Int = 1,
     ) = StackTraceElement(className, method, file, line)
 
-    private fun nativeFrame(
-        className: String,
-        method: String = "m",
-        file: String? = null
-    ) = StackTraceElement(className, method, file, -2) // -2 => isNativeMethod == true
+    private fun nativeFrame(className: String, method: String = "m", file: String? = null) =
+        StackTraceElement(className, method, file, -2) // -2 => isNativeMethod == true
 
     private fun JsonObject.stack(): JsonArray = this["stackTrace"]!!.jsonArray
 
@@ -41,22 +44,28 @@ class ThrowableSerializationTest {
 
     private class OomThrowable(msg: String?) : RuntimeException(msg) {
         @Suppress("RedundantOverride")
-        override fun getStackTrace(): Array<StackTraceElement> {
+        override fun getStackTrace(): Array<StackTraceElement> =
             throw OutOfMemoryError("simulated OOME")
-        }
     }
 
     // -- tests ----------------------------------------------------------------
 
     @Test
     fun suffixTrimming_removes_terminal_framework_frames_only() {
-        val t = RuntimeException("boom").apply {
-            stackTrace = arrayOf(
-                frame("app.A", "f", "A.kt", 10),
-                frame("java.util.concurrent.ForkJoinTask", "doExec", "ForkJoinTask.java", 100),
-                frame("java.lang.Thread", "run", "Thread.java", 748)
-            )
-        }
+        val t =
+            RuntimeException("boom").apply {
+                stackTrace =
+                    arrayOf(
+                        frame("app.A", "f", "A.kt", 10),
+                        frame(
+                            "java.util.concurrent.ForkJoinTask",
+                            "doExec",
+                            "ForkJoinTask.java",
+                            100,
+                        ),
+                        frame("java.lang.Thread", "run", "Thread.java", 748),
+                    )
+            }
 
         val json = t.toJsonObject()
         val stk = json.stack()
@@ -66,31 +75,42 @@ class ThrowableSerializationTest {
 
     @Test
     fun suffixTrimming_keeps_midstack_framework_frames() {
-        val t = RuntimeException("boom").apply {
-            stackTrace = arrayOf(
-                frame("app.Top", "top", "Top.kt", 1),
-                frame("java.util.concurrent.Foo", "bar", "Foo.java", 2),
-                frame("app.Bottom", "bot", "Bottom.kt", 3),
-                frame("java.lang.Thread", "run", "Thread.java", 748)
-            )
-        }
+        val t =
+            RuntimeException("boom").apply {
+                stackTrace =
+                    arrayOf(
+                        frame("app.Top", "top", "Top.kt", 1),
+                        frame("java.util.concurrent.Foo", "bar", "Foo.java", 2),
+                        frame("app.Bottom", "bot", "Bottom.kt", 3),
+                        frame("java.lang.Thread", "run", "Thread.java", 748),
+                    )
+            }
 
         val json = t.toJsonObject()
         val stk = json.stack()
         assertEquals(3, stk.size)
         assertEquals("app.Top", stk[0].jsonObject["className"]!!.jsonPrimitive.content)
-        assertEquals("java.util.concurrent.Foo", stk[1].jsonObject["className"]!!.jsonPrimitive.content, "mid-stack framework frame should remain")
+        assertEquals(
+            "java.util.concurrent.Foo",
+            stk[1].jsonObject["className"]!!.jsonPrimitive.content,
+            "mid-stack framework frame should remain",
+        )
         assertEquals("app.Bottom", stk[2].jsonObject["className"]!!.jsonPrimitive.content)
     }
 
     @Test
     fun maxFrames_limits_after_trimming() {
-        val t = RuntimeException("boom").apply {
-            stackTrace = arrayOf(
-                frame("app.F1"), frame("app.F2"), frame("app.F3"),
-                frame("app.F4"), frame("app.F5")
-            )
-        }
+        val t =
+            RuntimeException("boom").apply {
+                stackTrace =
+                    arrayOf(
+                        frame("app.F1"),
+                        frame("app.F2"),
+                        frame("app.F3"),
+                        frame("app.F4"),
+                        frame("app.F5"),
+                    )
+            }
         val json = t.toJsonObject(ThrowableJsonOptions(maxFrames = 3, trimFrameworkSuffix = false))
         val stk = json.stack()
         assertEquals(3, stk.size)
@@ -100,13 +120,20 @@ class ThrowableSerializationTest {
 
     @Test
     fun frame_fields_lineNumber_and_isNative_emitted_selectively() {
-        val t = RuntimeException("boom").apply {
-            stackTrace = arrayOf(
-                frame("C1", "m", "C1.kt", -1),    // unknown line -> omit lineNumber
-                nativeFrame("C2", "m", null),     // native -> isNative=true, fileName=null
-                frame("C3", "m", "C3.kt", 42)     // normal -> lineNumber present, isNative omitted
-            )
-        }
+        val t =
+            RuntimeException("boom").apply {
+                stackTrace =
+                    arrayOf(
+                        frame("C1", "m", "C1.kt", -1), // unknown line -> omit lineNumber
+                        nativeFrame("C2", "m", null), // native -> isNative=true, fileName=null
+                        frame(
+                            "C3",
+                            "m",
+                            "C3.kt",
+                            42,
+                        ), // normal -> lineNumber present, isNative omitted
+                    )
+            }
 
         val json = t.toJsonObject(ThrowableJsonOptions(trimFrameworkSuffix = false))
         val stk = json.stack()
@@ -120,7 +147,10 @@ class ThrowableSerializationTest {
         val f1 = stk[1].jsonObject
         assertEquals("C2", f1["className"]!!.jsonPrimitive.content)
         assertTrue(f1["fileName"] is JsonNull, "fileName should be JsonNull when original is null")
-        assertTrue(f1["isNative"]!!.jsonPrimitive.boolean, "isNative should be true for native frames")
+        assertTrue(
+            f1["isNative"]!!.jsonPrimitive.boolean,
+            "isNative should be true for native frames",
+        )
         assertFalse(f1.hasKey("lineNumber"), "native frames shouldn’t carry a numeric line")
 
         val f2 = stk[2].jsonObject
@@ -135,9 +165,19 @@ class ThrowableSerializationTest {
         val json = root.toJsonObject(ThrowableJsonOptions(maxDepth = 1))
 
         val causeLevel1 = json["cause"]!!.jsonObject
-        assertTrue(causeLevel1["truncated"]!!.jsonPrimitive.boolean, "First cause object should be marked truncated at depth cap")
-        assertTrue(causeLevel1["stackTrace"]!!.jsonArray.isEmpty(), "Truncated node should have empty stackTrace")
-        assertEquals(JsonNull, causeLevel1["cause"], "Truncated node should not expand further causes")
+        assertTrue(
+            causeLevel1["truncated"]!!.jsonPrimitive.boolean,
+            "First cause object should be marked truncated at depth cap",
+        )
+        assertTrue(
+            causeLevel1["stackTrace"]!!.jsonArray.isEmpty(),
+            "Truncated node should have empty stackTrace",
+        )
+        assertEquals(
+            JsonNull,
+            causeLevel1["cause"],
+            "Truncated node should not expand further causes",
+        )
         assertTrue(causeLevel1["suppressed"]!!.jsonArray.isEmpty())
     }
 
@@ -152,7 +192,10 @@ class ThrowableSerializationTest {
         val json = root.toJsonObject(ThrowableJsonOptions(maxSuppressed = 1))
         val sup = json["suppressed"]!!.jsonArray
         assertEquals(2, sup.size, "One entry + omission marker expected")
-        assertEquals("java.lang.IllegalStateException", sup[0].jsonObject["className"]!!.jsonPrimitive.content)
+        assertEquals(
+            "java.lang.IllegalStateException",
+            sup[0].jsonObject["className"]!!.jsonPrimitive.content,
+        )
         val omitted = sup[1].jsonObject["omitted"]!!.jsonPrimitive.int
         assertEquals(1, omitted, "Should report exactly one omitted suppressed throwable")
     }
@@ -168,7 +211,10 @@ class ThrowableSerializationTest {
 
         val bJson = json["cause"]!!.jsonObject
         val cycleNode = bJson["cause"]!!.jsonObject
-        assertTrue(cycleNode["cycle"]!!.jsonPrimitive.boolean, "Cycle marker expected when revisiting a seen Throwable")
+        assertTrue(
+            cycleNode["cycle"]!!.jsonPrimitive.boolean,
+            "Cycle marker expected when revisiting a seen Throwable",
+        )
         // sanity: the cycle node should be a small stub
         assertTrue(cycleNode["stackTrace"]!!.jsonArray.isEmpty())
         assertEquals(JsonNull, cycleNode["cause"])
@@ -183,9 +229,12 @@ class ThrowableSerializationTest {
         e.addSuppressed(d) // suppressed cycle
 
         val json = d.toJsonObject()
-        val sup0 = json["suppressed"]!!.jsonArray[0].jsonObject           // E
-        val deep = sup0["suppressed"]!!.jsonArray[0].jsonObject           // cycle stub of D
-        assertTrue(deep["cycle"]!!.jsonPrimitive.boolean, "Cycle in suppressed chain should be marked")
+        val sup0 = json["suppressed"]!!.jsonArray[0].jsonObject // E
+        val deep = sup0["suppressed"]!!.jsonArray[0].jsonObject // cycle stub of D
+        assertTrue(
+            deep["cycle"]!!.jsonPrimitive.boolean,
+            "Cycle in suppressed chain should be marked",
+        )
     }
 
     @Test
@@ -198,12 +247,14 @@ class ThrowableSerializationTest {
 
     @Test
     fun trimFrameworkSuffix_false_keeps_suffix_frames() {
-        val t = RuntimeException("boom").apply {
-            stackTrace = arrayOf(
-                frame("app.A", "f", "A.kt", 10),
-                frame("java.lang.Thread", "run", "Thread.java", 748)
-            )
-        }
+        val t =
+            RuntimeException("boom").apply {
+                stackTrace =
+                    arrayOf(
+                        frame("app.A", "f", "A.kt", 10),
+                        frame("java.lang.Thread", "run", "Thread.java", 748),
+                    )
+            }
 
         val json = t.toJsonObject(ThrowableJsonOptions(trimFrameworkSuffix = false))
         val stk = json.stack()
@@ -213,16 +264,19 @@ class ThrowableSerializationTest {
 
     @Test
     fun custom_exclude_prefixes_respected() {
-        val t = RuntimeException("boom").apply {
-            stackTrace = arrayOf(
-                frame("app.A"),
-                frame("java.util.concurrent.ForkJoinTask"),
-                frame("java.lang.Thread")
+        val t =
+            RuntimeException("boom").apply {
+                stackTrace =
+                    arrayOf(
+                        frame("app.A"),
+                        frame("java.util.concurrent.ForkJoinTask"),
+                        frame("java.lang.Thread"),
+                    )
+            }
+        val opts =
+            ThrowableJsonOptions(
+                excludeSuffixPrefixes = setOf("java.lang.") // do NOT exclude java.util.concurrent
             )
-        }
-        val opts = ThrowableJsonOptions(
-            excludeSuffixPrefixes = setOf("java.lang.") // do NOT exclude java.util.concurrent
-        )
         val json = t.toJsonObject(opts)
         val stk = json.stack()
         assertEquals(2, stk.size)
@@ -230,7 +284,7 @@ class ThrowableSerializationTest {
         assertEquals(
             "java.util.concurrent.ForkJoinTask",
             stk[1].jsonObject["className"]!!.jsonPrimitive.content,
-            "Should retain the last java.util.concurrent.* frame when only java.lang.* is excluded"
+            "Should retain the last java.util.concurrent.* frame when only java.lang.* is excluded",
         )
     }
 
