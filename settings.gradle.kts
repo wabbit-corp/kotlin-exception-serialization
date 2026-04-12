@@ -28,13 +28,7 @@ val useLocalBuildOverrides =
 val useMavenLocalArtifacts =
     providers.gradleProperty("wabbit.useMavenLocalArtifacts")
         .orElse(providers.environmentVariable("WABBIT_USE_MAVEN_LOCAL_ARTIFACTS"))
-        .map { value ->
-                when (value.trim().lowercase()) {
-                    "true" -> true
-                    "false" -> false
-                    else -> error("wabbit.useMavenLocalArtifacts must be true or false, got '$value'")
-                }
-            }
+        .map { it.parseWabbitBooleanFlag("wabbit.useMavenLocalArtifacts") }
         .orElse(false)
         .get()
 
